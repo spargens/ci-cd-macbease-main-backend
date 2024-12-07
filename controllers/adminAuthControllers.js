@@ -57,7 +57,11 @@ const loginAdmin = async (req, res) => {
     admin.save();
     return res
       .status(StatusCodes.OK)
-      .json({ admin: { name: admin.name }, token, refreshToken });
+      .json({
+        admin: { name: admin.name, image: admin.image, _id: admin._id },
+        token,
+        refreshToken,
+      });
   } else {
     return res.status(StatusCodes.OK).send('Invalid credentials!');
   }

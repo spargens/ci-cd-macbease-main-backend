@@ -1,10 +1,14 @@
 const mongoose = require('mongoose');
 const invitationSchema = new mongoose.Schema({
   sentBy: {
-    type: mongoose.Types.ObjectId,
+    type: mongoose.Schema.Types.ObjectId,
+    required: true,
+    refPath: 'sentByModel',
   },
   sentTo: {
-    type: mongoose.Types.ObjectId,
+    type: mongoose.Schema.Types.ObjectId,
+    required: true,
+    refPath: 'sentToModel',
   },
   cc: {
     type: Array,
@@ -43,6 +47,18 @@ const invitationSchema = new mongoose.Schema({
   },
   endorsedBy: {
     type: Array,
+  },
+  sentByModel: {
+    type: String,
+    required: true,
+    enum: ['User', 'Admin'],
+    default: 'User',
+  },
+  sentToModel: {
+    type: String,
+    required: true,
+    enum: ['User', 'Admin'],
+    default: 'User',
   },
 });
 

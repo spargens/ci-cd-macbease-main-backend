@@ -1,9 +1,15 @@
 const { StatusCodes } = require('http-status-codes');
 const Invitation = require('../models/invitation');
 const User = require('../models/user');
+const Admin = require('../models/admin');
 const schedule = require('node-schedule');
 const mongoose = require('mongoose');
-const { scheduleNotification, pingAdmins } = require('../controllers/utils');
+const {
+  scheduleNotification,
+  pingAdmins,
+  scheduleNotification2,
+  sendMail,
+} = require('../controllers/utils');
 
 //Controller 1
 const createInvitation = async (req, res) => {
@@ -108,6 +114,8 @@ const declineInvitation = async (req, res) => {
       state: 1,
       subject: 1,
       cc: 1,
+      sentByModel: 1,
+      sentToModel: 1,
     });
     if (!invitation) {
       return res.status(StatusCodes.NOT_FOUND).send('Invitation not found.');
@@ -124,64 +132,38 @@ const declineInvitation = async (req, res) => {
         .status(StatusCodes.BAD_REQUEST)
         .send('You are not authorized to reject this proposal.');
     }
-
     invitation.state = 'rejected';
     invitation.save();
-
-    //scheduling notification
-    let oneSec = new Date(Date.now() + 1000);
-    schedule.scheduleJob(
-      `proposal_decline_${req.user.id}_${invitationId}`,
-      oneSec,
-      async () => {
-        try {
-          const users = await User.find(
-            {
-              _id: {
-                $in: [invitation.sentBy, mongoose.Types.ObjectId(req.user.id)],
-              },
-            },
-            { unreadNotice: 1, name: 1, image: 1, pushToken: 1 }
-          );
-          const sender = users.find((user) =>
-            user._id.equals(invitation.sentBy)
-          );
-          const receiver = users.find((user) =>
-            user._id.equals(mongoose.Types.ObjectId(req.user.id))
-          );
-          if (!sender || !receiver) {
-            console.error('Sender or receiver not found.');
-            return;
-          }
-          const noticeSender = {
-            value: `Sorry! ${receiver.name} has rejected your proposal- ${invitation.subject}`,
-            img1: receiver.image,
-            img2: sender.image,
-            key: 'read',
-            time: new Date(),
-            uid: `${new Date()}/${sender._id}/${req.user.id}`,
-          };
-          const noticeReceiver = {
-            value: `Sorry! you have rejected the proposal- ${invitation.subject}`,
-            img1: sender.image,
-            img2: receiver.image,
-            key: 'read',
-            time: new Date(),
-            uid: `${new Date()}/${sender._id}/${req.user.id}`,
-          };
-          sender.unreadNotice.unshift(noticeSender);
-          receiver.unreadNotice.unshift(noticeReceiver);
-          await Promise.all([sender.save(), receiver.save()]);
-          scheduleNotification(
-            [sender.pushToken],
-            'Proposal rejected',
-            `Sorry! ${receiver.name} has rejected your proposal- ${invitation.subject}`
-          );
-        } catch (error) {
-          console.error('Error in scheduled notification:', error);
-        }
-      }
-    );
+    secondaryActions({
+      sentBy: invitation.sentBy,
+      sentTo: invitation.sentTo,
+      pingLevel: 2,
+      receiverEmail: {
+        intro: `Proposal titled - ${invitation.subject} was declined by you.`,
+        outro: 'Thank you for reviewing the proposal.',
+        subject: 'Proposal Declined',
+      },
+      senderEmail: {
+        intro: `Your proposal titled - ${invitation.subject} was declined.`,
+        outro:
+          'We are sorry for it. Hope so you try again with better proposal.',
+        subject: 'Proposal Declined',
+      },
+      receiverNotification: {
+        title: 'Proposal Declined',
+        body: `Proposal titled - ${invitation.subject} was declined by you.`,
+        img1: 'xyz',
+        img2: 'xyz',
+      },
+      senderNotification: {
+        title: 'Proposal Declined',
+        body: `Your proposal titled - ${invitation.subject} was declined.`,
+        img1: 'xyz',
+        img2: 'xyz',
+      },
+      sentByModal: invitation.sentByModel,
+      sentToModal: invitation.sentToModel,
+    });
 
     return res
       .status(StatusCodes.OK)
@@ -201,50 +183,36 @@ const endorseInvitation = async (req, res) => {
     const result = await Invitation.findByIdAndUpdate(
       invitationId,
       { $addToSet: { endorsedBy: req.user.id } },
-      { new: true, fields: { endorsedBy: 1, sentBy: 1, subject: 1 } }
+      {
+        new: true,
+        fields: {
+          endorsedBy: 1,
+          sentBy: 1,
+          subject: 1,
+          sentTo: 1,
+          sentByModel: 1,
+          sentToModel: 1,
+        },
+      }
     );
     if (!result) {
       return res.status(StatusCodes.NOT_FOUND).send('Invitation not found.');
     }
-    //sending push and in-app notification
-    let oneSec = new Date(Date.now() + 1000);
-    schedule.scheduleJob(
-      `endorsement_notice_${req.user.id}_${invitationId}`,
-      oneSec,
-      async () => {
-        try {
-          const [endorser, recipient] = await Promise.all([
-            User.findById(req.user.id, { name: 1, image: 1 }),
-            User.findById(result.sentBy, {
-              pushToken: 1,
-              unreadNotice: 1,
-              image: 1,
-            }),
-          ]);
-          if (!endorser || !recipient) {
-            console.error('User not found for notification');
-            return;
-          }
-          const notice = {
-            value: `Your proposal titled: ${result.subject} was endorsed by ${endorser.name}`,
-            img1: recipient.image,
-            img2: endorser.image,
-            key: 'read',
-            time: new Date(),
-            uid: `endorsement_notice_${req.user.id}_${invitationId}`,
-          };
-          recipient.unreadNotice = [notice, ...recipient.unreadNotice];
-          await recipient.save();
-          scheduleNotification(
-            [recipient.pushToken],
-            'Proposal endorsed',
-            `Your proposal titled: ${result.subject} was endorsed by ${endorser.name}`
-          );
-        } catch (error) {
-          console.error('Error in scheduled notification:', error);
-        }
-      }
-    );
+    secondaryActions({
+      sentBy: result.sentBy,
+      sentTo: result.sentTo,
+      pingLevel: 0,
+      receiverNotification: {
+        title: 'Proposal Endorsed',
+        body: `Thank you for endorsing proposal titled ${result.subject}`,
+      },
+      senderNotification: {
+        title: 'Proposal Endorsed',
+        body: `Your proposal titled - ${result.subject} was endorsed.`,
+      },
+      sentByModal: result.sentByModel,
+      sentToModal: result.sentToModel,
+    });
 
     return res
       .status(StatusCodes.OK)
@@ -268,6 +236,8 @@ const acceptInvitation = async (req, res) => {
       state: 1,
       subject: 1,
       cc: 1,
+      sentByModel: 1,
+      sentToModel: 1,
     });
     if (!invitation) {
       return res.status(StatusCodes.NOT_FOUND).send('Invitation not found.');
@@ -287,61 +257,35 @@ const acceptInvitation = async (req, res) => {
 
     invitation.state = 'accepted';
     invitation.save();
-
-    //scheduling notification
-    let oneSec = new Date(Date.now() + 1000);
-    schedule.scheduleJob(
-      `proposal_accept_${req.user.id}_${invitationId}`,
-      oneSec,
-      async () => {
-        try {
-          const users = await User.find(
-            {
-              _id: {
-                $in: [invitation.sentBy, mongoose.Types.ObjectId(req.user.id)],
-              },
-            },
-            { unreadNotice: 1, name: 1, image: 1, pushToken: 1 }
-          );
-          const sender = users.find((user) =>
-            user._id.equals(invitation.sentBy)
-          );
-          const receiver = users.find((user) =>
-            user._id.equals(mongoose.Types.ObjectId(req.user.id))
-          );
-          if (!sender || !receiver) {
-            console.error('Sender or receiver not found.');
-            return;
-          }
-          const noticeSender = {
-            value: `Congratulations! ${receiver.name} has accepted your proposal- ${invitation.subject}`,
-            img1: receiver.image,
-            img2: sender.image,
-            key: 'read',
-            time: new Date(),
-            uid: `${new Date()}/${sender._id}/${req.user.id}`,
-          };
-          const noticeReceiver = {
-            value: `Congratulations! you have accepted the proposal- ${invitation.subject}`,
-            img1: sender.image,
-            img2: receiver.image,
-            key: 'read',
-            time: new Date(),
-            uid: `${new Date()}/${sender._id}/${req.user.id}`,
-          };
-          sender.unreadNotice.unshift(noticeSender);
-          receiver.unreadNotice.unshift(noticeReceiver);
-          await Promise.all([sender.save(), receiver.save()]);
-          scheduleNotification(
-            [sender.pushToken],
-            'Proposal accepted',
-            `Congratulations! ${receiver.name} has accepted your proposal- ${invitation.subject}`
-          );
-        } catch (error) {
-          console.error('Error in scheduled notification:', error);
-        }
-      }
-    );
+    secondaryActions({
+      sentBy: invitation.sentBy,
+      sentTo: invitation.sentTo,
+      pingLevel: 2,
+      receiverEmail: {
+        intro: `Proposal titled - ${invitation.subject} was accepted by you.`,
+        outro: 'Thank you for reviewing the proposal.',
+        subject: 'Proposal Accepted',
+      },
+      senderEmail: {
+        intro: `Your proposal titled - ${invitation.subject} was accepted.`,
+        outro: 'Congratulations! It is a remarkable achievement.',
+        subject: 'Proposal Accepted',
+      },
+      receiverNotification: {
+        title: 'Proposal Accepted',
+        body: `Proposal titled - ${invitation.subject} was accepted by you.`,
+        img1: 'xyz',
+        img2: 'xyz',
+      },
+      senderNotification: {
+        title: 'Proposal Accepted',
+        body: `Your proposal titled - ${invitation.subject} was accepted.`,
+        img1: 'xyz',
+        img2: 'xyz',
+      },
+      sentByModal: invitation.sentByModel,
+      sentToModal: invitation.sentToModel,
+    });
 
     return res
       .status(StatusCodes.OK)
@@ -356,20 +300,148 @@ const acceptInvitation = async (req, res) => {
 
 const getPendingCreatorApplications = async (req, res) => {
   try {
-    if (req.user.role === 'admin') {
-      const applications = await Invitation.find({
-        type: 'Content Team Application',
-        state: 'undecided',
-      });
-      return res.status(StatusCodes.OK).json(applications);
-    } else {
+    if (req.user.role !== 'admin') {
       return res
         .status(StatusCodes.MISDIRECTED_REQUEST)
         .send('You are not authorized to access this route.');
     }
+    const applications = await Invitation.find({
+      type: 'Content Team Application',
+      state: 'undecided',
+    }).populate('sentBy', 'name image pushToken');
+    const finalData = applications.map((application) => ({
+      ...application._doc,
+      senderMetaData: application.sentBy,
+    }));
+    return res.status(StatusCodes.OK).json(finalData);
   } catch (error) {
-    console.log(error);
-    return res.status(StatusCodes.OK).send('Something went wrong.');
+    console.error(error);
+    return res
+      .status(StatusCodes.INTERNAL_SERVER_ERROR)
+      .send('Something went wrong.');
+  }
+};
+
+const secondaryActions = async ({
+  sentBy,
+  sentTo,
+  sentByModal,
+  sentToModal,
+  pingLevel,
+  senderNotification,
+  receiverNotification,
+  senderEmail,
+  receiverEmail,
+}) => {
+  try {
+    let oneSec = new Date(Date.now() + 1000);
+    schedule.scheduleJob(
+      `${sentBy}_${sentTo}_${new Date().toISOString()}`,
+      oneSec,
+      async () => {
+        // Helper function to fetch user/admin details
+        const fetchUserOrAdmin = async (id, model) => {
+          const fields = {
+            unreadNotice: 1,
+            name: 1,
+            image: 1,
+            pushToken: 1,
+            email: 1,
+          };
+          return model === 'User'
+            ? await User.findById(id, fields)
+            : await Admin.findById(id, fields);
+        };
+
+        const sender = await fetchUserOrAdmin(sentBy, sentByModal);
+        const receiver = await fetchUserOrAdmin(sentTo, sentToModal);
+
+        if (!sender || !receiver) {
+          console.error('Sender or receiver not found.');
+          return;
+        }
+
+        // Helper function to send notifications
+        const sendNotification = (target, notificationPayload, model) => {
+          if (!notificationPayload?.title || !notificationPayload?.body) return;
+
+          const notificationData = {
+            pushToken: [target.pushToken],
+            title: notificationPayload.title,
+            body: notificationPayload.body,
+            ...(notificationPayload.url && { url: notificationPayload.url }),
+          };
+
+          if (model === 'User') {
+            notificationPayload.url
+              ? scheduleNotification2(notificationData)
+              : scheduleNotification(
+                  [target.pushToken],
+                  notificationData.title,
+                  notificationData.body
+                );
+          } else {
+            // Function to dispatch notification to admin
+          }
+        };
+
+        // Send notifications
+        sendNotification(sender, senderNotification, sentByModal);
+        sendNotification(receiver, receiverNotification, sentToModal);
+
+        // Handle pingLevel actions
+        if (pingLevel === 1 || pingLevel === 2) {
+          const createNotice = (title, img1, img2) => ({
+            value: title,
+            img1,
+            img2,
+            key: 'read',
+            time: new Date(),
+            uid: `${new Date()}/${sender._id}/${receiver._id}`,
+          });
+
+          const noticeSender = createNotice(
+            senderNotification?.title,
+            receiver.image,
+            sender.image
+          );
+          const noticeReceiver = createNotice(
+            receiverNotification?.title,
+            sender.image,
+            receiver.image
+          );
+
+          sender.unreadNotice.unshift(noticeSender);
+          receiver.unreadNotice.unshift(noticeReceiver);
+
+          await Promise.all([sender.save(), receiver.save()]);
+        }
+
+        // Send emails if pingLevel is 2
+        if (pingLevel === 2) {
+          const sendEmailToUser = async (target, emailData) => {
+            if (!emailData) return;
+            const { ses, params } = await sendMail(
+              `${target.name}`,
+              emailData.intro,
+              emailData.outro,
+              emailData.subject,
+              [target.email]
+            );
+            ses.sendEmail(params, (err) => {
+              if (err) console.error(err, err.stack);
+            });
+          };
+
+          await Promise.all([
+            sendEmailToUser(sender, senderEmail),
+            sendEmailToUser(receiver, receiverEmail),
+          ]);
+        }
+      }
+    );
+  } catch (error) {
+    console.error(error);
   }
 };
 
