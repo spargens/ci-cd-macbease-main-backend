@@ -39,10 +39,19 @@ const resourceRouter = require('./routes/resourceRouter');
 app.use(cors());
 app.use(express.json());
 
-const serviceAccount = require('./macbease-57286f7a0321.json');
-
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+  credential: admin.credential.cert({
+    "project_id": process.env.PROJECT_ID ,
+  "private_key_id": process.env.PRIVATE_KEY_ID,
+  "private_key": process.env.PRIVATE_KEY.replace(/\\n/g, '\n'),
+  "client_email": process.env.CLIENT_EMAIL,
+  "client_id":process.env.CLIENT_ID,
+  "auth_uri": process.env.AUTH_URI,
+  "token_uri": process.env.TOKEN_URI,
+  "auth_provider_x509_cert_url": process.env.AUTH_PROVIDER,
+  "client_x509_cert_url": process.env.CLIENT,
+  "universe_domain": process.env.UNIVERSE_DOMAIN
+  }),
 });
 
 app.get('/', (req, res) => {
