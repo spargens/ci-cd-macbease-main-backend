@@ -73,6 +73,9 @@ const contentSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  vector: {
+    type: Array,
+  }
 });
 
 module.exports = mongoose.model('Content', contentSchema);

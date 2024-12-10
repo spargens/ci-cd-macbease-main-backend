@@ -1172,6 +1172,7 @@ const contentEmbedding = async (req, res) => {
 
     for (let i = 0; i < contents.length; i++) {
       let content = contents[i];
+      if(content.vector.length===0){
       const tagsString = content.tags ? content.tags.join(", ") : "";
       const combinedInput = `${content.text} ${tagsString}`;
 
@@ -1193,6 +1194,7 @@ const contentEmbedding = async (req, res) => {
       // Delay to respect rate limits
       await new Promise(resolve => setTimeout(resolve, 200));
     }
+    }
 
     return res.status(StatusCodes.OK).send('Successful');
   } catch (error) {
@@ -1201,6 +1203,40 @@ const contentEmbedding = async (req, res) => {
   }
 };
 
+// Vector search on content
+const searchContent = async (req, res) => {
+  const { query } = req.body;
+  try {
+
+    const embedding = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: query,
+      encoding_format: 'float',
+    });
+
+    const contents = await Content.aggregate([
+      {
+        $vectorSearch: {
+          queryVector: embedding.data[0].embedding,
+          path: 'vector',
+          numCandidates: 100,
+          limit: 5,
+          index: 'vector_index',
+        },
+      },
+      {
+        $project: {
+          text: 1,
+          tags:1
+        },
+      },
+    ]);
+    return res.status(StatusCodes.OK).json(contents);
+  } catch (error) {
+    console.log(error.message);
+    return res.status(StatusCodes.OK).send('Something went wrong.');
+  }
+};
 
 module.exports = {
   redundancy,
@@ -1223,5 +1259,6 @@ module.exports = {
   editContent,
   replyToComment,
   loadMoreContent,
-  contentEmbedding
+  contentEmbedding,
+  searchContent
 };
