@@ -6,6 +6,8 @@ const Club = require('../models/club');
 const Community = require('../models/community');
 const MacbeaseContent = require('../models/macbeaseContent');
 const schedule = require('node-schedule');
+const { OpenAI } = require('openai');
+
 
 const mongoose = require('mongoose');
 const {
@@ -17,6 +19,8 @@ const {
   lemmatize,
   getRelatedTags,
 } = require('../controllers/commonControllers');
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 //Controller 1
 const createContent = async (req, res) => {
@@ -1161,6 +1165,43 @@ const replyToComment = async (req, res) => {
   }
 };
 
+// Function to create embeddings for content
+const contentEmbedding = async (req, res) => {
+  try {
+    let contents = await Content.find({});
+
+    for (let i = 0; i < contents.length; i++) {
+      let content = contents[i];
+      const tagsString = content.tags ? content.tags.join(", ") : "";
+      const combinedInput = `${content.text} ${tagsString}`;
+
+      try {
+        const embedding = await openai.embeddings.create({
+          model: 'text-embedding-3-small',
+          input: combinedInput,
+          encoding_format: 'float',
+        });
+
+        console.log(`Embedding generated for content ID: ${content.text}`);
+        content.vector = embedding.data[0].embedding;
+        await content.save();
+        console.log(`Successfully saved embedding for content ID: ${content.text}`);
+      } catch (err) {
+        console.error(`Failed to process content ID: ${i+1}`, err.message);
+      }
+
+      // Delay to respect rate limits
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+
+    return res.status(StatusCodes.OK).send('Successful');
+  } catch (error) {
+    console.error('Error during content embedding process:', error.message);
+    return res.status(StatusCodes.INTERNAL_SERVER_ERROR).send('Something went wrong.');
+  }
+};
+
+
 module.exports = {
   redundancy,
   getPopularComments,
@@ -1182,4 +1223,5 @@ module.exports = {
   editContent,
   replyToComment,
   loadMoreContent,
+  contentEmbedding
 };

@@ -22,6 +22,7 @@ const {
   editContent,
   replyToComment,
   loadMoreContent,
+  contentEmbedding
 } = require('../controllers/contentController');
 
 router.post('/createContent', createContent);
@@ -44,4 +45,5 @@ router.get('/redundancy', redundancy);
 router.patch('/editContent', editContent);
 router.post("/replyToComment",replyToComment);
 router.get('/loadMoreContent', loadMoreContent);
+router.post("/createContentEmbedding",contentEmbedding)
 module.exports = router;
